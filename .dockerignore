@@ -1,0 +1,80 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp
+.pnp.js
+
+# Environment variables (excluding .env.db and .env.prod needed for Docker)
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+
+# Next.js build outputs
+.next/
+out/
+build/
+dist/
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+playwright/
+tests/
+
+# Logs
+logs/
+*.log
+
+# dotenv environment variables file
+.env.test
+
+# next.js build output
+.next
+
+# Version control
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+
+# Temporary files
+tmp/
+temp/
+
+# Docker files (don't include Docker files in Docker build)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+README.md
+LICENSE
+*.md
+docs/
+
+# Configuration files that aren't needed in production
+.editorconfig
+.eslintrc*
+.prettierrc*
+playwright.config.ts
+
+# Vercel
+vercel-template.json
+
+# Migrations (handled separately)
+migrations/
+
+# Package manager files
+package-lock.json
+
+# Local development
+.env.example

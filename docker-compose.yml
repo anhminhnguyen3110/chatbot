@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  postgres:
+    container_name: ai_chatbot_postgres
+    image: postgres:15
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ai_chatbot_user
+      POSTGRES_PASSWORD: ai_chatbot_password
+      POSTGRES_DB: ai_chatbot
+    volumes:
+      - ../docker-data/postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_chatbot_user -d ai_chatbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-stack:
+    container_name: ai_chatbot_redis
+    image: redis/redis-stack:latest
+    restart: always
+    ports:
+      - "6379:6379"
+      - "5540:8001"
+    volumes:
+      - ../docker-data/redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  vpaura-business-chatbot:
+    container_name: vpaura_business_app
+    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-stack:
+        condition: service_healthy
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
