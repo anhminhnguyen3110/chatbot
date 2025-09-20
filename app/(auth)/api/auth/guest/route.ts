@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
-    secureCookie: !isDevelopmentEnvironment,
+    secureCookie: false,
   });
 
   if (token) {
