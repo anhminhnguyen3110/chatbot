@@ -199,10 +199,6 @@ export async function POST(request: Request) {
               dataStream,
             }),
           },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: 'stream-text',
-          },
           onFinish: async ({ usage }) => {
             try {
               const providers = await getTokenlensCatalog();

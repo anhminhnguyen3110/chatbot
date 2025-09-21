@@ -1,33 +1,47 @@
+# Build dependencies
 FROM node:20-alpine AS base
 WORKDIR /app
-RUN npm install -g pnpm
 
-FROM base AS builder
-WORKDIR /app
+RUN apk add --no-cache bash && \
+    npm install -g pnpm node-prune
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
 
+RUN pnpm install --frozen-lockfile && \
+    pnpm cache clean
+
+# Build Image
 FROM base AS build
-COPY --from=builder /app/node_modules ./node_modules
+WORKDIR /app
+COPY --from=base /app/node_modules ./node_modules
 COPY . .
 COPY .env.prod .env
-RUN pnpm run build
 
-FROM base AS runner
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm run build 
+RUN rm -rf node_modules 
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts 
+RUN npx node-prune
 
+FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Copy package files and install production dependencies
+COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm && \
+    pnpm install --prod --frozen-lockfile
+
+# Copy built application from build stage
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/lib/db ./lib/db
-COPY .env.db .env.db
+# COPY --from=build /app/component.json ./
+COPY --from=build /app/next-env.d.ts ./
+COPY --from=build /app/next.config.ts ./
 COPY .env.prod .env
 
+# For db migration
+COPY --from=build /app/lib/db ./lib/db
+COPY .env.db .env.db
 EXPOSE 3000
 
 # Run migrations and start the application
