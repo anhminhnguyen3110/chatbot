@@ -28,6 +28,7 @@ import { isProductionEnvironment } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
+import { logger, formatError, createChatMetadata } from '@/lib/logging';
 import { geolocation } from '@vercel/functions';
 import {
   createResumableStreamContext,
@@ -53,10 +54,10 @@ const getTokenlensCatalog = cache(
     try {
       return await fetchModels();
     } catch (err) {
-      console.warn(
-        'TokenLens: catalog fetch failed, using default catalog',
-        err,
-      );
+      logger.warn('TokenLens: catalog fetch failed, using default catalog', {
+        error: err,
+        component: 'tokenlens-catalog'
+      });
       return undefined; // tokenlens helpers will fall back to defaultCatalog
     }
   },
@@ -72,11 +73,14 @@ export function getStreamContext() {
       });
     } catch (error: any) {
       if (error.message.includes('REDIS_URL')) {
-        console.log(
-          ' > Resumable streams are disabled due to missing REDIS_URL',
-        );
+        logger.info('Resumable streams are disabled due to missing REDIS_URL', {
+          component: 'resumable-streams'
+        });
       } else {
-        console.error(error);
+        logger.error('Failed to create resumable stream context', {
+          ...formatError(error),
+          component: 'resumable-streams'
+        });
       }
     }
   }
@@ -84,13 +88,29 @@ export function getStreamContext() {
   return globalStreamContext;
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
+  const requestId = request.headers.get('x-request-id') || 'unknown';
   let requestBody: PostRequestBody;
 
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
+    
+    // Log parsed request details
+    logger.info('Chat API request parsed', {
+      requestId,
+      messageId: requestBody.id,
+      messageType: requestBody.message?.role,
+      messagePartsCount: requestBody.message?.parts?.length || 0,
+      selectedModel: requestBody.selectedChatModel,
+      visibility: requestBody.selectedVisibilityType
+    });
+    
+  } catch (error) {
+    logger.error('Failed to parse request body', {
+      requestId,
+      error: error instanceof Error ? error.message : 'Unknown parsing error'
+    });
     return new ChatSDKError('bad_request:api').toResponse();
   }
 
@@ -110,6 +130,7 @@ export async function POST(request: Request) {
     const session = await auth();
 
     if (!session?.user) {
+      logger.warn('Unauthorized chat request', { requestId });
       return new ChatSDKError('unauthorized:chat').toResponse();
     }
 
@@ -121,6 +142,12 @@ export async function POST(request: Request) {
     });
 
     if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+      logger.warn('Rate limit exceeded', { 
+        requestId, 
+        userId: session.user.id,
+        messageCount,
+        limit: entitlementsByUserType[userType].maxMessagesPerDay
+      });
       return new ChatSDKError('rate_limit:chat').toResponse();
     }
 
@@ -220,7 +247,10 @@ export async function POST(request: Request) {
               finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
               dataStream.write({ type: 'data-usage', data: finalMergedUsage });
             } catch (err) {
-              console.warn('TokenLens enrichment failed', err);
+              logger.warn('TokenLens enrichment failed', {
+                error: err,
+                component: 'tokenlens-enrichment'
+              });
               finalMergedUsage = usage;
               dataStream.write({ type: 'data-usage', data: finalMergedUsage });
             }
@@ -255,7 +285,11 @@ export async function POST(request: Request) {
               context: finalMergedUsage,
             });
           } catch (err) {
-            console.warn('Unable to persist last usage for chat', id, err);
+            logger.warn('Unable to persist last usage for chat', {
+              chatId: id,
+              error: err,
+              component: 'chat-persistence'
+            });
           }
         }
       },
@@ -267,16 +301,33 @@ export async function POST(request: Request) {
     const streamContext = getStreamContext();
 
     if (streamContext) {
+      logger.info('Streaming chat response (resumable)', {
+        requestId,
+        streamId,
+        chatId: id,
+        model: selectedChatModel,
+        hasStreamContext: true
+      });
       return new Response(
         await streamContext.resumableStream(streamId, () =>
           stream.pipeThrough(new JsonToSseTransformStream()),
         ),
       );
     } else {
+      logger.info('Streaming chat response', {
+        requestId,
+        chatId: id,
+        model: selectedChatModel,
+        hasStreamContext: false
+      });
       return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
     }
   } catch (error) {
     if (error instanceof ChatSDKError) {
+      logger.warn('Chat SDK error occurred', {
+        requestId,
+        errorMessage: error.message
+      });
       return error.toResponse();
     }
 
@@ -287,35 +338,67 @@ export async function POST(request: Request) {
         'AI Gateway requires a valid credit card on file to service requests',
       )
     ) {
+      logger.error('AI Gateway credit card error', {
+        requestId,
+        error: error.message
+      });
       return new ChatSDKError('bad_request:activate_gateway').toResponse();
     }
 
-    console.error('Unhandled error in chat API:', error);
+    logger.error('Unhandled error in chat API', {
+      requestId,
+      ...formatError(error as Error),
+      component: 'chat-api'
+    });
     return new ChatSDKError('offline:chat').toResponse();
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
+  const requestId = request.headers.get('x-request-id') || 'unknown';
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
 
+  logger.info('Delete chat request', {
+    requestId,
+    chatId: id
+  });
+
   if (!id) {
+    logger.warn('Delete request missing chat ID', { requestId });
     return new ChatSDKError('bad_request:api').toResponse();
   }
 
   const session = await auth();
 
   if (!session?.user) {
+    logger.warn('Unauthorized delete request', { requestId });
     return new ChatSDKError('unauthorized:chat').toResponse();
   }
 
   const chat = await getChatById({ id });
 
   if (chat?.userId !== session.user.id) {
+    logger.warn('Forbidden delete request', { 
+      requestId, 
+      chatId: id,
+      userId: session.user.id,
+      chatOwnerId: chat?.userId
+    });
     return new ChatSDKError('forbidden:chat').toResponse();
   }
 
   const deletedChat = await deleteChatById({ id });
 
+  logger.info('Chat deleted successfully', {
+    requestId,
+    chatId: id,
+    userId: session.user.id
+  });
+
   return Response.json(deletedChat, { status: 200 });
 }
+
+// Export handlers directly (logging is handled internally)
+export const POST = handlePOST;
+export const DELETE = handleDELETE;
