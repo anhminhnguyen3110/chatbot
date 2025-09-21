@@ -51,6 +51,17 @@ services:
         condition: service_healthy
       redis-stack:
         condition: service_healthy
+    environment:
+      AUTH_SECRET: "***"
+      AI_API_KEY: "***"
+      BLOB_READ_WRITE_TOKEN: "****"
+      AI_MODEL: "deepseek/deepseek-chat-v3.1:free"
+      POSTGRES_URL: "postgresql://ai_chatbot_user:ai_chatbot_password@ai_chatbot_postgres:5432/ai_chatbot"
+      REDIS_URL: "redis://ai_chatbot_redis:6379"
+      NODE_ENV: "production"
+      NEXTAUTH_URL: "http://localhost:3000"
+      AUTH_TRUST_HOST: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
     networks:
       - app-network
 

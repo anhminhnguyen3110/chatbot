@@ -1,9 +1,13 @@
-# Build dependencies
+# Use official Node.js image as the base image
 FROM node:20-alpine AS base
 WORKDIR /app
 
 RUN apk add --no-cache bash && \
-    npm install -g pnpm node-prune
+npm install -g pnpm node-prune
+
+# Build dependencies
+FROM base AS deps
+WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
 
@@ -13,9 +17,8 @@ RUN pnpm install --frozen-lockfile && \
 # Build Image
 FROM base AS build
 WORKDIR /app
-COPY --from=base /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-COPY .env.prod .env
 
 RUN pnpm run build 
 RUN rm -rf node_modules 
@@ -37,11 +40,9 @@ COPY --from=build /app/public ./public
 # COPY --from=build /app/component.json ./
 COPY --from=build /app/next-env.d.ts ./
 COPY --from=build /app/next.config.ts ./
-COPY .env.prod .env
 
 # For db migration
 COPY --from=build /app/lib/db ./lib/db
-COPY .env.db .env.db
 EXPOSE 3000
 
 # Run migrations and start the application
